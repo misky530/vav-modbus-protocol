@@ -1,8 +1,10 @@
 // 读 Getter 数组 / forceMode → 写 Slave + 维护历史环形缓冲（供 /vav 曲线）
+// 正常↔值班切换时，压力 SP / 风机频率中心 / 阀风量中心约 8s 缓变（ease-out），非瞬时跳变
 const prev = global.get('vavSim') || {};
 const now = Date.now();
 const t0 = prev.t0 || now;
 const t = (now - t0) / 1000;
+const RAMP_MS = 8000;
 
 let regsIn = [];
 if (Array.isArray(msg.payload)) regsIn = msg.payload;
@@ -16,13 +18,17 @@ function u16(v) {
 }
 
 let mode = prev.mode || 'normal';
+const prevMode = mode;
 const forced = msg.forceMode || (msg.message && msg.message.forceMode);
-if (forced === 'normal' || forced === 'standby') mode = forced;
-else if (regsIn.length >= 21) {
+let modeCmd = null;
+if (forced === 'normal' || forced === 'standby') {
+  mode = forced;
+  modeCmd = forced;
+} else if (regsIn.length >= 21) {
   const cmdNormal = u16(regsIn[19]);
   const cmdStandby = u16(regsIn[20]);
-  if (cmdStandby === 1) mode = 'standby';
-  else if (cmdNormal === 1) mode = 'normal';
+  if (cmdStandby === 1) { mode = 'standby'; modeCmd = 'standby'; }
+  else if (cmdNormal === 1) { mode = 'normal'; modeCmd = 'normal'; }
 }
 const normal = mode === 'normal';
 
@@ -34,11 +40,70 @@ function rnd(seed) {
 function wave(amp, periodSec, phase) {
   return amp * Math.sin(2 * Math.PI * t / periodSec + phase);
 }
+function easeOut(u) {
+  u = clamp(u, 0, 1);
+  return 1 - Math.pow(1 - u, 2);
+}
+function lerp(a, b, u) { return a + (b - a) * u; }
+function centersFor(m) {
+  const n = m === 'normal';
+  return { sp: n ? 500 : 300, hz: n ? 48 : 28, fl: n ? 2000 : 1000, kd: 80 };
+}
 
-const spCenter = normal ? 500 : 300;
-const hzCenter = normal ? 48 : 28;
-const flCenter = normal ? 2000 : 1000;
-const kdCenter = 80;
+const targetCenters = centersFor(mode);
+let transition = prev.transition || null;
+
+// 模式命令触发：立刻更新 mode_status 目标，并从当前有效中心开始约 8s 过渡
+if (modeCmd && mode !== prevMode) {
+  const from = (prev.centers && typeof prev.centers.sp === 'number')
+    ? Object.assign({}, prev.centers)
+    : centersFor(prevMode);
+  transition = {
+    from: from,
+    to: Object.assign({}, targetCenters),
+    start: now,
+    duration: RAMP_MS,
+    targetMode: mode
+  };
+} else if (modeCmd && mode === prevMode && transition && transition.targetMode === mode) {
+  // 同模式重复命令：若仍在过渡中，保持现有过渡；已结束则无需重启
+} else if (mode !== prevMode && !modeCmd) {
+  // 兜底（例如外部改写了 mode）
+  const from = (prev.centers && typeof prev.centers.sp === 'number')
+    ? Object.assign({}, prev.centers)
+    : centersFor(prevMode);
+  transition = {
+    from: from,
+    to: Object.assign({}, targetCenters),
+    start: now,
+    duration: RAMP_MS,
+    targetMode: mode
+  };
+}
+
+let spCenter = targetCenters.sp;
+let hzCenter = targetCenters.hz;
+let flCenter = targetCenters.fl;
+let kdCenter = targetCenters.kd;
+let transitioning = false;
+
+if (transition && transition.start && transition.duration) {
+  const u = (now - transition.start) / transition.duration;
+  if (u < 1) {
+    transitioning = true;
+    const e = easeOut(u);
+    const fr = transition.from || targetCenters;
+    const to = transition.to || targetCenters;
+    spCenter = lerp(fr.sp, to.sp, e);
+    hzCenter = lerp(fr.hz, to.hz, e);
+    flCenter = lerp(fr.fl, to.fl, e);
+    kdCenter = lerp(fr.kd != null ? fr.kd : 80, to.kd != null ? to.kd : 80, e);
+  } else {
+    transition = null;
+  }
+}
+
+const centers = { sp: spCenter, hz: hzCenter, fl: flCenter, kd: kdCenter };
 
 const pfylBase = spCenter + wave(12, 45, 0.2) + wave(4, 9, 1.1);
 const pfyl1 = Math.round(clamp(pfylBase + (rnd(1) - 0.5) * 3, -500, 500));
@@ -63,7 +128,7 @@ const fl_sum_123 = valves['排风阀-1'].fl + valves['排风阀-2'].fl + valves[
 const fl_sum_456 = valves['排风阀-4'].fl + valves['排风阀-5'].fl + valves['排风阀-6'].fl;
 
 const sim = {
-  t0, mode, sp: spCenter,
+  t0, mode, sp: spCenter, centers, transition, transitioning,
   fans: {
     '排风机-1': { pfyl: pfyl1, fjpl: fjpl1i },
     '排风机-2': { pfyl: pfyl2, fjpl: fjpl2i }
@@ -138,11 +203,12 @@ for (let i = 0; i < order.length; i++) {
   bytes.push((r >> 8) & 0xFF, r & 0xFF);
 }
 
-// 历史：约 0.5s 一点，保留 1 小时 ≈ 7200 点；这里保守留 2400 点（约20分钟）
+// 历史：约 0.5s 一点，保留约 20 分钟；过渡期内中间值自然入历史
 const hist = global.get('vavHistory') || [];
 hist.push({
   t: now,
   mode: mode,
+  transitioning: transitioning ? 1 : 0,
   pfyl1: sim.fans['排风机-1'].pfyl,
   pfyl2: sim.fans['排风机-2'].pfyl,
   fjpl1: sim.fans['排风机-1'].fjpl,
@@ -157,7 +223,8 @@ hist.push({
   fl_sum_456: sim.sums.fl_sum_456,
   kd1: sim.valves['排风阀-1'].kd,
   yc: sim.room['温湿压-1'].yc,
-  modeStatus: normal ? 0 : 1
+  modeStatus: normal ? 0 : 1,
+  sp: Math.round(spCenter)
 });
 while (hist.length > 2400) hist.shift();
 global.set('vavHistory', hist);
@@ -168,8 +235,9 @@ global.set('vavMode', mode);
 global.set('vavHoldingRegisters', regs);
 
 const writeMsg = {
-  topic: 'vavSim/' + mode,
+  topic: 'vavSim/' + mode + (transitioning ? '/ramping' : ''),
   mode: mode,
+  transitioning: transitioning,
   registers: regs,
   payload: { value: bytes, register: 'holding', address: 0, disableMsgOutput: 1 }
 };

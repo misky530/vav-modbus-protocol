@@ -4,55 +4,37 @@ from pathlib import Path
 
 flows_path = Path('/home/pi/node-red-da/flows.json')
 assets = Path('/home/pi/vav_patch_assets')
-backup = Path('/home/pi/node-red-da/flows.json.bak-flsum-' + time.strftime('%Y%m%d-%H%M%S'))
+backup = Path('/home/pi/node-red-da/flows.json.bak-mode-ramp-' + time.strftime('%Y%m%d-%H%M%S'))
 
 NEW_FUNC = (assets / 'curve_writer.js').read_text(encoding='utf-8')
-NEW_HTML = (assets / 'page.html').read_text(encoding='utf-8')
 
 shutil.copy2(flows_path, backup)
 print('backup', backup)
 
 flows = json.loads(flows_path.read_text(encoding='utf-8'))
-MAP = {
-    '3d91c14fd319c6ca': ('func', NEW_FUNC),
-    '080d1def5812c44f': ('template', NEW_HTML),
-}
-QTY_IDS = {
-    'e9e974c4a06e9f47',
-    '7787bb858ad8c153',
-    '876611e85a375746',
-    '91d15f0eac864568',
-}
+TARGET_TAB = '9b5b8d7ad5f7564b'
+KNOWN_IDS = {'3d91c14fd319c6ca'}
 
 changed = []
-found = set()
 for n in flows:
+    if n.get('type') != 'function':
+        continue
     nid = n.get('id')
-    if nid in MAP:
-        field, val = MAP[nid]
-        if n.get('z') != '9b5b8d7ad5f7564b':
-            raise SystemExit('bad z for %s: %s' % (nid, n.get('z')))
-        n[field] = val
-        changed.append('%s:%s:%s' % (nid, n.get('name'), field))
-        found.add(nid)
-    if nid in QTY_IDS and n.get('type') == 'function':
-        if n.get('z') != '9b5b8d7ad5f7564b':
-            raise SystemExit('bad z for qty %s: %s' % (nid, n.get('z')))
-        old = n.get('func', '')
-        new = old.replace('quantity: 22', 'quantity: 24').replace('起 22 点', '起 24 点')
-        if new != old:
-            n['func'] = new
-            changed.append('%s:%s:qty24' % (nid, n.get('name')))
-            found.add(nid)
+    name = n.get('name') or ''
+    hit = nid in KNOWN_IDS or name == '命令字+曲线并回写' or ('曲线' in name and '回写' in name)
+    if not hit:
+        continue
+    z = n.get('z')
+    if z and z != TARGET_TAB:
+        print('warn z', nid, z)
+    n['func'] = NEW_FUNC
+    changed.append('%s:%s' % (nid, name))
 
-missing = (set(MAP) | QTY_IDS) - found
-if missing:
-    raise SystemExit('missing nodes: %s' % missing)
+if not changed:
+    raise SystemExit('curve writer node not found')
 
 flows_path.write_text(json.dumps(flows, ensure_ascii=False) + '\n', encoding='utf-8')
 print('patched', changed)
 txt = flows_path.read_text(encoding='utf-8')
-assert 'fl_sum_123' in txt
-assert 'fl_sum_456' in txt
-assert 'quantity: 24' in txt
+assert 'RAMP_MS' in txt and 'easeOut' in txt and 'transitioning' in txt
 print('verify strings ok')

@@ -30,13 +30,17 @@ Process values follow curves. The mode stays where it is until a command registe
 | 1–19 | 0–18 | 40001–40019 | `pfyl` `fjpl` `fl` `kd` `wd` `sd` `yc` | 两台排风机、六台排风阀、一套温湿压 | 只读 FC03 |
 | 20 | 19 | 40020 | `cmd_normal` | 切正常模式，写 `1` 触发，处理后 Slave 清 `0` | 可写 FC06 / FC16 |
 | 21 | 20 | 40021 | `cmd_standby` | 切值班模式，写 `1` 触发，处理后 Slave 清 `0` | 可写 FC06 / FC16 |
-| 22 | 21 | 40022 | `mode_status` | 当前模式：`0` 正常 / `1` 值班 | 只读 FC03 |
+| 22 | 21 | 40022 | `mode_status` | 当前模式：`0` 正常 / `1` 值班；过渡一开始就翻转 | 只读 FC03 |
 | 23 | 22 | 40023 | `fl_sum_123` | 排风阀 1+2+3 总风量（m³/h） | 只读 FC03 |
 | 24 | 23 | 40024 | `fl_sum_456` | 排风阀 4+5+6 总风量（m³/h） | 只读 FC03 |
 
 20 与 21 同时为 `1` 时，**值班优先**。曲线中心大约为：正常静压 ≈ 500 Pa、频率 ≈ 48 Hz、单阀风量 ≈ 2000 m³/h；值班静压 ≈ 300 Pa、频率 ≈ 28 Hz、单阀风量 ≈ 1000 m³/h。阀开度在约 80% 附近轻摆。
 
+写入 20 或 21 后，静压、频率和风量的中心从当前有效值向目标做约 **8 秒 ease-out** 缓变，不是瞬时跳变。`mode_status`（地址 22）在过渡**开始时**就变成目标模式，不等过程量到位。没有单独的「过渡中」寄存器。`/vav` 历史大约每 0.5 秒一点，过渡期内会留下中间值，每个点带 `transitioning`（`1` 表示仍在缓变）。
+
 If both 20 and 21 are `1`, **standby wins**. Curve centers are about 500 Pa / 48 Hz / 2000 m³/h per valve in normal mode, and 300 Pa / 28 Hz / 1000 m³/h in standby. Valve position wanders around 80%.
+
+After a write to 20 or 21, the static-pressure, frequency, and airflow centers ease out from their current values toward the new targets over about **8 seconds**. `mode_status` (address 22) flips to the target mode at the **start** of that ramp. There is no extra transitioning register. `/vav` history is sampled about every 0.5 s, so the ramp shows up as intermediate points, each with `transitioning` (`1` while the ramp is still running).
 
 ## 文件 / Files
 
@@ -57,9 +61,9 @@ If both 20 and 21 are `1`, **standby wins**. Curve centers are about 500 Pa / 48
 
 Install `node-red-contrib-modbus` first. The flow also contains custom DA nodes (`mtic-da-module-instanse`, `mtic-da-module-extend`). If that palette is absent, those nodes show up as unknown after import; the Modbus slave, curve writer, and `/vav` routes are on the same tab. Import `vav-modbus-slave-flow.json` and deploy. The slave listens on **TCP 5020**. The on-canvas injects labeled 本地调试 are local debug shortcuts for the same mode switch.
 
-`scripts/vav_patch_assets/vav_patch_flows.py` 是可选的旧补丁脚本：它按固定节点 id，把曲线函数和页面 HTML 写进一份已经存在的 `flows.json`，并把读寄存器数量改成 24。脚本里的路径（`/home/pi/node-red-da/flows.json`、`/home/pi/vav_patch_assets`）只是当时那台机器上的示例布局。新环境直接导入根目录的 `vav-modbus-slave-flow.json` 即可，该文件已包含 24 点曲线与 `/vav` 页面。
+`scripts/vav_patch_assets/vav_patch_flows.py` 是可选补丁：在一份已经存在的 `flows.json` 里，按节点 id 或名称「命令字+曲线并回写」替换曲线函数（含约 8 秒缓变）。脚本里的路径（`/home/pi/node-red-da/flows.json`、`/home/pi/vav_patch_assets`）只是当时那台机器上的示例布局。新环境直接导入根目录的 `vav-modbus-slave-flow.json` 即可，该文件已包含 24 点曲线、缓变和 `/vav` 页面。
 
-That helper is optional. It patches an existing `flows.json` by node id. The `/home/pi/...` paths inside it are an example layout from one machine. For a new editor, import `vav-modbus-slave-flow.json`.
+That helper is optional. It replaces the curve-writer function (including the ~8 s ramp) in an existing `flows.json`, matched by node id or by the name 命令字+曲线并回写. The `/home/pi/...` paths inside it are an example layout from one machine. For a new editor, import `vav-modbus-slave-flow.json`.
 
 ## 打开曲线页 / Open `/vav`
 
@@ -72,9 +76,9 @@ http://<node-red-host>:1880/vav
 http://<node-red-host>:1880/vav/api
 ```
 
-`/vav` 是 Chart.js 页面，约每秒拉取 `/vav/api`。页面从 jsDelivr 加载 Chart.js，浏览器需要能访问该 CDN。`/vav/api` 返回 JSON：`mode`（`normal` 或 `standby`）、`count`、`points`（环形缓冲，大约保留 20 分钟）。页面展示静压、风机频率、阀 1 风量/开度/模式，以及两组总风量。
+`/vav` 是 Chart.js 页面，约每秒拉取 `/vav/api`。页面从 jsDelivr 加载 Chart.js，浏览器需要能访问该 CDN。`/vav/api` 返回 JSON：`mode`（`normal` 或 `standby`，过渡开始即切换）、`count`、`points`（环形缓冲，大约保留 20 分钟）。历史点里可以带 `transitioning`，过渡的大约 8 秒内为 `1`，同时静压、频率和风量是中间值。页面展示静压、风机频率、阀 1 风量/开度/模式，以及两组总风量。
 
-`/vav` is a Chart.js page that polls `/vav/api` about once a second. Chart.js is loaded from jsDelivr. `/vav/api` returns `{ mode, count, points }` from a ring buffer of about 20 minutes.
+`/vav` is a Chart.js page that polls `/vav/api` about once a second. Chart.js is loaded from jsDelivr. `/vav/api` returns `{ mode, count, points }` from a ring buffer of about 20 minutes. `mode` switches when the ramp starts. History points may include `transitioning` (`1` for about 8 seconds) together with the in-between pressure, frequency, and airflow values.
 
 ## 第三方如何写 20 / 21 / How a master writes 20 and 21
 
@@ -84,13 +88,13 @@ Connect to TCP **5020** on the host that runs Node-RED, Unit ID **1**. Replace `
 
 | 动作 | 功能码 | 协议地址 | PDU（0 基） | 写入值 | 之后 |
 |---|---|---:|---:|---|---|
-| 切正常 | FC06 或 FC16 | 20 | 19 | `1` | Slave 清命令字为 `0`；地址 22 变为 `0` |
-| 切值班 | FC06 或 FC16 | 21 | 20 | `1` | Slave 清命令字为 `0`；地址 22 变为 `1` |
-| 读当前模式 | FC03 | 22 | 21 | — | `0` 正常，`1` 值班 |
+| 切正常 | FC06 或 FC16 | 20 | 19 | `1` | 命令字清 `0`；地址 22 立刻变为 `0`；静压/频率/风量约 8 秒缓变到位 |
+| 切值班 | FC06 或 FC16 | 21 | 20 | `1` | 命令字清 `0`；地址 22 立刻变为 `1`；静压/频率/风量约 8 秒缓变到位 |
+| 读当前模式 | FC03 | 22 | 21 | — | `0` 正常，`1` 值班（过渡一开始即为此值） |
 
-过程量 1–19 与汇总 23–24 对第三方是只读（FC03）。命令字是边沿触发：保持写 `1` 没有额外意义，处理完会被清零。
+过程量 1–19 与汇总 23–24 对第三方是只读（FC03）。命令字是边沿触发：保持写 `1` 没有额外意义，处理完会被清零。地址 22 只表示目标模式，不表示缓变是否结束。
 
-Registers 1–19 and 23–24 are read-only for a third party (FC03). Command registers are edge-triggered: the slave clears them back to `0` after it handles the write.
+Registers 1–19 and 23–24 are read-only for a third party (FC03). Command registers are edge-triggered: the slave clears them back to `0` after it handles the write. Address 22 reports the target mode as soon as the ramp starts. The pressures, frequencies, and airflows are still moving for about 8 seconds after that.
 
 使用 [mbpoll](https://github.com/epsilonrt/mbpoll) 时，默认参考地址从 1 起，与协议地址一致：
 
