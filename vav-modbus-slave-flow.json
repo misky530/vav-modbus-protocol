@@ -1,0 +1,1255 @@
+[
+  {
+    "id": "tab_vav_slave",
+    "type": "tab",
+    "label": "变静压 Modbus Slave",
+    "disabled": false,
+    "info": "Flex-Getter 自读命令字；合法 write 回 Slave；Dashboard 曲线。"
+  },
+  {
+    "id": "e000000000000001",
+    "type": "comment",
+    "z": "tab_vav_slave",
+    "name": "曲线改走 /vav（无需 dashboard）。gateway-report 空 props 请禁用节点 52fae09f…",
+    "info": "打开 http://<host>:1880/vav 看历史曲线；/vav/api 返回 JSON。",
+    "x": 480,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "e000000000000010",
+    "type": "inject",
+    "z": "tab_vav_slave",
+    "name": "周期 0.5s",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "0.5",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "1",
+    "topic": "tick",
+    "payload": "",
+    "payloadType": "date",
+    "x": 150,
+    "y": 120,
+    "wires": [
+      [
+        "e000000000000015"
+      ]
+    ]
+  },
+  {
+    "id": "e000000000000015",
+    "type": "function",
+    "z": "tab_vav_slave",
+    "name": "组装 FC03 请求",
+    "func": "// 向本机 Slave 读 Holding PDU0 起 24 点\nmsg.payload = { fc: 3, unitid: 1, address: 0, quantity: 24 };\nmsg.topic = 'poll';\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 360,
+    "y": 120,
+    "wires": [
+      [
+        "e400000000000020"
+      ]
+    ]
+  },
+  {
+    "id": "e000000000000020",
+    "type": "inject",
+    "z": "tab_vav_slave",
+    "name": "本地调试：正常",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "dbg",
+    "payload": "",
+    "payloadType": "date",
+    "x": 160,
+    "y": 200,
+    "wires": [
+      [
+        "e000000000000021"
+      ]
+    ]
+  },
+  {
+    "id": "e000000000000021",
+    "type": "function",
+    "z": "tab_vav_slave",
+    "name": "force normal",
+    "func": "msg.forceMode = 'normal';\nmsg.payload = { fc: 3, unitid: 1, address: 0, quantity: 24 };\nmsg.topic = 'force/normal';\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 370,
+    "y": 200,
+    "wires": [
+      [
+        "e400000000000020"
+      ]
+    ]
+  },
+  {
+    "id": "e000000000000022",
+    "type": "inject",
+    "z": "tab_vav_slave",
+    "name": "本地调试：值班",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "dbg",
+    "payload": "",
+    "payloadType": "date",
+    "x": 160,
+    "y": 240,
+    "wires": [
+      [
+        "e000000000000023"
+      ]
+    ]
+  },
+  {
+    "id": "e000000000000023",
+    "type": "function",
+    "z": "tab_vav_slave",
+    "name": "force standby",
+    "func": "msg.forceMode = 'standby';\nmsg.payload = { fc: 3, unitid: 1, address: 0, quantity: 24 };\nmsg.topic = 'force/standby';\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 380,
+    "y": 240,
+    "wires": [
+      [
+        "e400000000000020"
+      ]
+    ]
+  },
+  {
+    "id": "e000000000000030",
+    "type": "function",
+    "z": "tab_vav_slave",
+    "name": "命令字+曲线并回写",
+    "func": "// 读 Getter 数组 / forceMode → 写 Slave + 维护历史环形缓冲（供 /vav 曲线）\nconst prev = global.get('vavSim') || {};\nconst now = Date.now();\nconst t0 = prev.t0 || now;\nconst t = (now - t0) / 1000;\n\nlet regsIn = [];\nif (Array.isArray(msg.payload)) regsIn = msg.payload;\nelse if (msg.payload && Array.isArray(msg.payload.data)) regsIn = msg.payload.data;\n\nfunction u16(v) {\n  v = Number(v);\n  if (!Number.isFinite(v)) return 0;\n  v = v & 0xFFFF;\n  return v > 32767 ? v - 65536 : v;\n}\n\nlet mode = prev.mode || 'normal';\nconst forced = msg.forceMode || (msg.message && msg.message.forceMode);\nif (forced === 'normal' || forced === 'standby') mode = forced;\nelse if (regsIn.length >= 21) {\n  const cmdNormal = u16(regsIn[19]);\n  const cmdStandby = u16(regsIn[20]);\n  if (cmdStandby === 1) mode = 'standby';\n  else if (cmdNormal === 1) mode = 'normal';\n}\nconst normal = mode === 'normal';\n\nfunction clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }\nfunction rnd(seed) {\n  const x = Math.sin((t + seed) * 12.9898) * 43758.5453;\n  return x - Math.floor(x);\n}\nfunction wave(amp, periodSec, phase) {\n  return amp * Math.sin(2 * Math.PI * t / periodSec + phase);\n}\n\nconst spCenter = normal ? 500 : 300;\nconst hzCenter = normal ? 48 : 28;\nconst flCenter = normal ? 2000 : 1000;\nconst kdCenter = 80;\n\nconst pfylBase = spCenter + wave(12, 45, 0.2) + wave(4, 9, 1.1);\nconst pfyl1 = Math.round(clamp(pfylBase + (rnd(1) - 0.5) * 3, -500, 500));\nconst pfyl2 = Math.round(clamp(pfylBase + wave(6, 38, 2.0) + (rnd(2) - 0.5) * 3, -500, 500));\nconst fjpl1i = Math.round(clamp(hzCenter + wave(1.6, 40, 0.5) + (rnd(3) - 0.5) * 0.4, 0, 50));\nconst fjpl2i = Math.round(clamp(hzCenter + wave(1.4, 42, 1.7) + (rnd(4) - 0.5) * 0.4, 0, 50));\n\nconst valves = {};\nfor (let i = 1; i <= 6; i++) {\n  const kd = Math.round(clamp(kdCenter + wave(2.5, 55 + i, i * 0.7) + (rnd(10 + i) - 0.5) * 0.8, 0, 100));\n  const fl = Math.round(clamp(\n    flCenter * (0.92 + 0.08 * (kd / 80)) + wave(60 + i * 5, 36 + i, i) + (rnd(20 + i) - 0.5) * 20,\n    0, 5000\n  ));\n  valves['排风阀-' + i] = { fl, kd };\n}\nconst wd = Math.round(clamp(24 + wave(1.2, 180, 0.3) + (rnd(30) - 0.5) * 0.2, -50, 100));\nconst sd = Math.round(clamp(55 + wave(4, 240, 1.0) + (rnd(31) - 0.5) * 0.5, 0, 100));\nconst yc = Math.round(clamp(5 + wave(2.5, 70, 0.8) + (rnd(32) - 0.5) * 0.4, -500, 500));\n\nconst fl_sum_123 = valves['排风阀-1'].fl + valves['排风阀-2'].fl + valves['排风阀-3'].fl;\nconst fl_sum_456 = valves['排风阀-4'].fl + valves['排风阀-5'].fl + valves['排风阀-6'].fl;\n\nconst sim = {\n  t0, mode, sp: spCenter,\n  fans: {\n    '排风机-1': { pfyl: pfyl1, fjpl: fjpl1i },\n    '排风机-2': { pfyl: pfyl2, fjpl: fjpl2i }\n  },\n  valves,\n  sums: { fl_sum_123, fl_sum_456 },\n  room: { '温湿压-1': { wd, sd, yc } },\n  points: {},\n  overrides: prev.overrides || {}\n};\n\nObject.keys(sim.overrides).forEach((k) => {\n  const o = sim.overrides[k];\n  if (!o || o.until < now) { delete sim.overrides[k]; return; }\n  const [dev, code] = k.split('.');\n  if (sim.fans[dev]) sim.fans[dev][code] = o.value;\n  else if (sim.valves[dev]) sim.valves[dev][code] = o.value;\n  else if (sim.room[dev]) sim.room[dev][code] = o.value;\n});\n\n// 覆盖后重算总风量\nsim.sums.fl_sum_123 = sim.valves['排风阀-1'].fl + sim.valves['排风阀-2'].fl + sim.valves['排风阀-3'].fl;\nsim.sums.fl_sum_456 = sim.valves['排风阀-4'].fl + sim.valves['排风阀-5'].fl + sim.valves['排风阀-6'].fl;\n\nfunction put(dev, code, value, unit, addr) {\n  sim.points[dev + '.' + code] = { device: dev, code, value, unit, protocolAddress: addr };\n}\nput('排风机-1','pfyl', sim.fans['排风机-1'].pfyl, 'Pa', 1);\nput('排风机-1','fjpl', sim.fans['排风机-1'].fjpl, 'Hz', 2);\nput('排风机-2','pfyl', sim.fans['排风机-2'].pfyl, 'Pa', 3);\nput('排风机-2','fjpl', sim.fans['排风机-2'].fjpl, 'Hz', 4);\nfor (let i = 1; i <= 6; i++) {\n  const a = 5 + (i - 1) * 2;\n  const name = '排风阀-' + i;\n  put(name, 'fl', sim.valves[name].fl, 'm³/h', a);\n  put(name, 'kd', sim.valves[name].kd, '%', a + 1);\n}\nput('温湿压-1','wd', sim.room['温湿压-1'].wd, '℃', 17);\nput('温湿压-1','sd', sim.room['温湿压-1'].sd, '%', 18);\nput('温湿压-1','yc', sim.room['温湿压-1'].yc, 'Pa', 19);\nput('系统命令','cmd_normal', 0, '-', 20);\nput('系统命令','cmd_standby', 0, '-', 21);\nput('系统状态','mode_status', normal ? 0 : 1, '-', 22);\nput('排风汇总','fl_sum_123', sim.sums.fl_sum_123, 'm³/h', 23);\nput('排风汇总','fl_sum_456', sim.sums.fl_sum_456, 'm³/h', 24);\n\nfunction toReg(v) {\n  let n = Math.round(Number(v));\n  if (!Number.isFinite(n)) n = 0;\n  if (n < 0) n = (n + 65536) & 0xFFFF;\n  return n & 0xFFFF;\n}\nconst order = [\n  ['排风机-1','pfyl'], ['排风机-1','fjpl'],\n  ['排风机-2','pfyl'], ['排风机-2','fjpl'],\n  ['排风阀-1','fl'], ['排风阀-1','kd'],\n  ['排风阀-2','fl'], ['排风阀-2','kd'],\n  ['排风阀-3','fl'], ['排风阀-3','kd'],\n  ['排风阀-4','fl'], ['排风阀-4','kd'],\n  ['排风阀-5','fl'], ['排风阀-5','kd'],\n  ['排风阀-6','fl'], ['排风阀-6','kd'],\n  ['温湿压-1','wd'], ['温湿压-1','sd'], ['温湿压-1','yc'],\n  ['系统命令','cmd_normal'], ['系统命令','cmd_standby'], ['系统状态','mode_status'],\n  ['排风汇总','fl_sum_123'], ['排风汇总','fl_sum_456']\n];\nconst regs = [];\nconst bytes = [];\nfor (let i = 0; i < order.length; i++) {\n  const p = sim.points[order[i][0] + '.' + order[i][1]];\n  const r = toReg(p.value);\n  regs.push(r);\n  bytes.push((r >> 8) & 0xFF, r & 0xFF);\n}\n\n// 历史：约 0.5s 一点，保留 1 小时 ≈ 7200 点；这里保守留 2400 点（约20分钟）\nconst hist = global.get('vavHistory') || [];\nhist.push({\n  t: now,\n  mode: mode,\n  pfyl1: sim.fans['排风机-1'].pfyl,\n  pfyl2: sim.fans['排风机-2'].pfyl,\n  fjpl1: sim.fans['排风机-1'].fjpl,\n  fjpl2: sim.fans['排风机-2'].fjpl,\n  fl1: sim.valves['排风阀-1'].fl,\n  fl2: sim.valves['排风阀-2'].fl,\n  fl3: sim.valves['排风阀-3'].fl,\n  fl4: sim.valves['排风阀-4'].fl,\n  fl5: sim.valves['排风阀-5'].fl,\n  fl6: sim.valves['排风阀-6'].fl,\n  fl_sum_123: sim.sums.fl_sum_123,\n  fl_sum_456: sim.sums.fl_sum_456,\n  kd1: sim.valves['排风阀-1'].kd,\n  yc: sim.room['温湿压-1'].yc,\n  modeStatus: normal ? 0 : 1\n});\nwhile (hist.length > 2400) hist.shift();\nglobal.set('vavHistory', hist);\n\nsim.holdingRegisters = regs;\nglobal.set('vavSim', sim);\nglobal.set('vavMode', mode);\nglobal.set('vavHoldingRegisters', regs);\n\nconst writeMsg = {\n  topic: 'vavSim/' + mode,\n  mode: mode,\n  registers: regs,\n  payload: { value: bytes, register: 'holding', address: 0, disableMsgOutput: 1 }\n};\nreturn writeMsg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 650,
+    "y": 160,
+    "wires": [
+      [
+        "e400000000000001"
+      ]
+    ]
+  },
+  {
+    "id": "e000000000000050",
+    "type": "inject",
+    "z": "tab_vav_slave",
+    "name": "后台写：阀1开度=75",
+    "props": [
+      {
+        "p": "payload",
+        "v": "75",
+        "vt": "num"
+      },
+      {
+        "p": "device",
+        "v": "排风阀-1",
+        "vt": "str"
+      },
+      {
+        "p": "code",
+        "v": "kd",
+        "vt": "str"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "set",
+    "x": 180,
+    "y": 300,
+    "wires": [
+      [
+        "e000000000000060"
+      ]
+    ]
+  },
+  {
+    "id": "e000000000000060",
+    "type": "function",
+    "z": "tab_vav_slave",
+    "name": "单点覆盖",
+    "func": "const device = msg.device;\nconst code = msg.code;\nlet value = msg.payload;\nif (!device || !code || value === undefined || value === null) {\n  node.warn('需要 msg.device、msg.code、msg.payload');\n  return null;\n}\nvalue = Number(value);\nconst sim = global.get('vavSim') || { mode: 'normal', overrides: {}, t0: Date.now() };\nsim.overrides = sim.overrides || {};\nsim.overrides[device + '.' + code] = { value: value, until: Date.now() + 8000 };\nif (sim.fans && sim.fans[device]) sim.fans[device][code] = value;\nelse if (sim.valves && sim.valves[device]) sim.valves[device][code] = value;\nelse if (sim.room && sim.room[device]) sim.room[device][code] = value;\nglobal.set('vavSim', sim);\nmsg.payload = { fc: 3, unitid: 1, address: 0, quantity: 24 };\nmsg.topic = 'set/' + device + '.' + code;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 370,
+    "y": 300,
+    "wires": [
+      [
+        "e400000000000020"
+      ]
+    ]
+  },
+  {
+    "id": "e000000000000002",
+    "type": "comment",
+    "z": "tab_vav_slave",
+    "name": "右侧 DA 只读实例 → 127.0.0.1:5020",
+    "info": "",
+    "x": 1000,
+    "y": 80,
+    "wires": []
+  },
+  {
+    "id": "e000000000000070",
+    "type": "debug",
+    "z": "tab_vav_slave",
+    "name": "模式",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": true,
+    "complete": "mode",
+    "targetType": "msg",
+    "statusVal": "mode",
+    "statusType": "msg",
+    "x": 890,
+    "y": 240,
+    "wires": []
+  },
+  {
+    "id": "e000000000000005",
+    "type": "inject",
+    "z": "tab_vav_slave",
+    "name": "启动先写一轮",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "0.3",
+    "topic": "boot",
+    "payload": "",
+    "payloadType": "date",
+    "x": 160,
+    "y": 80,
+    "wires": [
+      [
+        "e000000000000006"
+      ]
+    ]
+  },
+  {
+    "id": "e000000000000006",
+    "type": "function",
+    "z": "tab_vav_slave",
+    "name": "bootstrap",
+    "func": "// 首次不读命令，直接按默认模式写一轮，避免 Getter 连上空 Slave\nmsg.payload = []; // 空数组 → 不解析命令\nmsg.topic = 'bootstrap';\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 370,
+    "y": 80,
+    "wires": [
+      [
+        "e000000000000030"
+      ]
+    ]
+  },
+  {
+    "id": "e400000000000010",
+    "type": "modbus-client",
+    "name": "VAV Local Slave",
+    "clienttype": "tcp",
+    "bufferCommands": true,
+    "stateLogEnabled": false,
+    "queueLogEnabled": false,
+    "failureLogEnabled": false,
+    "tcpHost": "127.0.0.1",
+    "tcpPort": "5020",
+    "tcpType": "DEFAULT",
+    "serialPort": "/dev/ttyUSB",
+    "serialType": "RTU-BUFFERD",
+    "serialBaudrate": "9600",
+    "serialDatabits": "8",
+    "serialStopbits": "1",
+    "serialParity": "none",
+    "serialConnectionDelay": "100",
+    "serialAsciiResponseStartDelimiter": "0x3A",
+    "unit_id": "1",
+    "commandDelay": 1,
+    "clientTimeout": 1000,
+    "reconnectOnTimeout": true,
+    "reconnectTimeout": 2000,
+    "parallelUnitIdsAllowed": true,
+    "showWarnings": false,
+    "showLogs": false
+  },
+  {
+    "id": "e400000000000001",
+    "type": "modbus-server",
+    "z": "tab_vav_slave",
+    "name": "VAV Modbus Slave",
+    "logEnabled": false,
+    "hostname": "0.0.0.0",
+    "serverPort": "5020",
+    "responseDelay": 50,
+    "delayUnit": "ms",
+    "coilsBufferSize": 10000,
+    "holdingBufferSize": 10000,
+    "inputBufferSize": 10000,
+    "discreteBufferSize": 10000,
+    "showErrors": false,
+    "showStatusActivities": true,
+    "x": 900,
+    "y": 180,
+    "wires": [
+      [],
+      [],
+      [],
+      [],
+      []
+    ]
+  },
+  {
+    "id": "e400000000000020",
+    "type": "modbus-flex-getter",
+    "z": "tab_vav_slave",
+    "name": "读本机 Holding",
+    "showStatusActivities": false,
+    "showErrors": false,
+    "logIOActivities": false,
+    "server": "e400000000000010",
+    "useIOFile": false,
+    "ioFile": "",
+    "useIOForPayload": false,
+    "emptyMsgOnFail": false,
+    "keepMsgProperties": true,
+    "delayOnStart": false,
+    "startDelayTime": "",
+    "x": 420,
+    "y": 160,
+    "wires": [
+      [
+        "e000000000000030"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "d100000000000001",
+    "type": "mtic-da-module-instanse",
+    "z": "tab_vav_slave",
+    "name": "排风机-1",
+    "protocol": "modbus",
+    "clientType": "tcp",
+    "serialPort": "/dev/ttyUSB",
+    "unitId": 1,
+    "tcpHost": "127.0.0.1",
+    "tcpPort": 5020,
+    "tcpType": "DEFAULT",
+    "baseAddress": "0",
+    "props": [
+      {
+        "id": "7900000000000000001",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "pfyl",
+        "name": "排风压力",
+        "scale": "1",
+        "spanLow": -500,
+        "spanHigh": 500,
+        "change": 0,
+        "unit": "Pa",
+        "address": 1,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522900859337195520",
+        "uniqueId": ".ef1.pfyl"
+      },
+      {
+        "id": "7900000000000000002",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "fjpl",
+        "name": "风机频率",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 50,
+        "change": 0,
+        "unit": "Hz",
+        "address": 2,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522900859865677824",
+        "uniqueId": ".ef1.fjpl"
+      }
+    ],
+    "propsAlarm": [],
+    "propsArchive": [],
+    "product": "816c878a8ce1d57a",
+    "x": 980,
+    "y": 160,
+    "wires": [
+      [],
+      [],
+      []
+    ]
+  },
+  {
+    "id": "d100000000000002",
+    "type": "mtic-da-module-instanse",
+    "z": "tab_vav_slave",
+    "name": "排风机-2",
+    "protocol": "modbus",
+    "clientType": "tcp",
+    "serialPort": "/dev/ttyUSB",
+    "unitId": 1,
+    "tcpHost": "127.0.0.1",
+    "tcpPort": 5020,
+    "tcpType": "DEFAULT",
+    "baseAddress": "0",
+    "props": [
+      {
+        "id": "7900000000000000003",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "pfyl",
+        "name": "排风压力",
+        "scale": "1",
+        "spanLow": -500,
+        "spanHigh": 500,
+        "change": 0,
+        "unit": "Pa",
+        "address": 3,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522900859337195520",
+        "uniqueId": ".ef2.pfyl"
+      },
+      {
+        "id": "7900000000000000004",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "fjpl",
+        "name": "风机频率",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 50,
+        "change": 0,
+        "unit": "Hz",
+        "address": 4,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522900859865677824",
+        "uniqueId": ".ef2.fjpl"
+      }
+    ],
+    "propsAlarm": [],
+    "propsArchive": [],
+    "product": "816c878a8ce1d57a",
+    "x": 980,
+    "y": 240,
+    "wires": [
+      [],
+      [],
+      []
+    ]
+  },
+  {
+    "id": "d200000000000001",
+    "type": "mtic-da-module-instanse",
+    "z": "tab_vav_slave",
+    "name": "排风阀-1",
+    "protocol": "modbus",
+    "clientType": "tcp",
+    "serialPort": "/dev/ttyUSB",
+    "unitId": 1,
+    "tcpHost": "127.0.0.1",
+    "tcpPort": 5020,
+    "tcpType": "DEFAULT",
+    "baseAddress": "0",
+    "props": [
+      {
+        "id": "7900000000000000005",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "fl",
+        "name": "风量",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 5000,
+        "change": 0,
+        "unit": "m³/h",
+        "address": 5,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522904192655441920",
+        "uniqueId": ".vav1.fl"
+      },
+      {
+        "id": "7900000000000000006",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "kd",
+        "name": "开度",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 100,
+        "change": 0,
+        "unit": "%",
+        "address": 6,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522904194320580608",
+        "uniqueId": ".vav1.kd"
+      }
+    ],
+    "propsAlarm": [],
+    "propsArchive": [],
+    "product": "6e26b36725e00942",
+    "x": 980,
+    "y": 340,
+    "wires": [
+      [],
+      [],
+      []
+    ]
+  },
+  {
+    "id": "d200000000000002",
+    "type": "mtic-da-module-instanse",
+    "z": "tab_vav_slave",
+    "name": "排风阀-2",
+    "protocol": "modbus",
+    "clientType": "tcp",
+    "serialPort": "/dev/ttyUSB",
+    "unitId": 1,
+    "tcpHost": "127.0.0.1",
+    "tcpPort": 5020,
+    "tcpType": "DEFAULT",
+    "baseAddress": "0",
+    "props": [
+      {
+        "id": "7900000000000000007",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "fl",
+        "name": "风量",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 5000,
+        "change": 0,
+        "unit": "m³/h",
+        "address": 7,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522904192655441920",
+        "uniqueId": ".vav2.fl"
+      },
+      {
+        "id": "7900000000000000008",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "kd",
+        "name": "开度",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 100,
+        "change": 0,
+        "unit": "%",
+        "address": 8,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522904194320580608",
+        "uniqueId": ".vav2.kd"
+      }
+    ],
+    "propsAlarm": [],
+    "propsArchive": [],
+    "product": "6e26b36725e00942",
+    "x": 980,
+    "y": 410,
+    "wires": [
+      [],
+      [],
+      []
+    ]
+  },
+  {
+    "id": "d200000000000003",
+    "type": "mtic-da-module-instanse",
+    "z": "tab_vav_slave",
+    "name": "排风阀-3",
+    "protocol": "modbus",
+    "clientType": "tcp",
+    "serialPort": "/dev/ttyUSB",
+    "unitId": 1,
+    "tcpHost": "127.0.0.1",
+    "tcpPort": 5020,
+    "tcpType": "DEFAULT",
+    "baseAddress": "0",
+    "props": [
+      {
+        "id": "7900000000000000009",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "fl",
+        "name": "风量",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 5000,
+        "change": 0,
+        "unit": "m³/h",
+        "address": 9,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522904192655441920",
+        "uniqueId": ".vav3.fl"
+      },
+      {
+        "id": "7900000000000000010",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "kd",
+        "name": "开度",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 100,
+        "change": 0,
+        "unit": "%",
+        "address": 10,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522904194320580608",
+        "uniqueId": ".vav3.kd"
+      }
+    ],
+    "propsAlarm": [],
+    "propsArchive": [],
+    "product": "6e26b36725e00942",
+    "x": 980,
+    "y": 480,
+    "wires": [
+      [],
+      [],
+      []
+    ]
+  },
+  {
+    "id": "d200000000000004",
+    "type": "mtic-da-module-instanse",
+    "z": "tab_vav_slave",
+    "name": "排风阀-4",
+    "protocol": "modbus",
+    "clientType": "tcp",
+    "serialPort": "/dev/ttyUSB",
+    "unitId": 1,
+    "tcpHost": "127.0.0.1",
+    "tcpPort": 5020,
+    "tcpType": "DEFAULT",
+    "baseAddress": "0",
+    "props": [
+      {
+        "id": "7900000000000000011",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "fl",
+        "name": "风量",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 5000,
+        "change": 0,
+        "unit": "m³/h",
+        "address": 11,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522904192655441920",
+        "uniqueId": ".vav4.fl"
+      },
+      {
+        "id": "7900000000000000012",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "kd",
+        "name": "开度",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 100,
+        "change": 0,
+        "unit": "%",
+        "address": 12,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522904194320580608",
+        "uniqueId": ".vav4.kd"
+      }
+    ],
+    "propsAlarm": [],
+    "propsArchive": [],
+    "product": "6e26b36725e00942",
+    "x": 980,
+    "y": 550,
+    "wires": [
+      [],
+      [],
+      []
+    ]
+  },
+  {
+    "id": "d200000000000005",
+    "type": "mtic-da-module-instanse",
+    "z": "tab_vav_slave",
+    "name": "排风阀-5",
+    "protocol": "modbus",
+    "clientType": "tcp",
+    "serialPort": "/dev/ttyUSB",
+    "unitId": 1,
+    "tcpHost": "127.0.0.1",
+    "tcpPort": 5020,
+    "tcpType": "DEFAULT",
+    "baseAddress": "0",
+    "props": [
+      {
+        "id": "7900000000000000013",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "fl",
+        "name": "风量",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 5000,
+        "change": 0,
+        "unit": "m³/h",
+        "address": 13,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522904192655441920",
+        "uniqueId": ".vav5.fl"
+      },
+      {
+        "id": "7900000000000000014",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "kd",
+        "name": "开度",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 100,
+        "change": 0,
+        "unit": "%",
+        "address": 14,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522904194320580608",
+        "uniqueId": ".vav5.kd"
+      }
+    ],
+    "propsAlarm": [],
+    "propsArchive": [],
+    "product": "6e26b36725e00942",
+    "x": 980,
+    "y": 620,
+    "wires": [
+      [],
+      [],
+      []
+    ]
+  },
+  {
+    "id": "d200000000000006",
+    "type": "mtic-da-module-instanse",
+    "z": "tab_vav_slave",
+    "name": "排风阀-6",
+    "protocol": "modbus",
+    "clientType": "tcp",
+    "serialPort": "/dev/ttyUSB",
+    "unitId": 1,
+    "tcpHost": "127.0.0.1",
+    "tcpPort": 5020,
+    "tcpType": "DEFAULT",
+    "baseAddress": "0",
+    "props": [
+      {
+        "id": "7900000000000000015",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "fl",
+        "name": "风量",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 5000,
+        "change": 0,
+        "unit": "m³/h",
+        "address": 15,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522904192655441920",
+        "uniqueId": ".vav6.fl"
+      },
+      {
+        "id": "7900000000000000016",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "kd",
+        "name": "开度",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 100,
+        "change": 0,
+        "unit": "%",
+        "address": 16,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522904194320580608",
+        "uniqueId": ".vav6.kd"
+      }
+    ],
+    "propsAlarm": [],
+    "propsArchive": [],
+    "product": "6e26b36725e00942",
+    "x": 980,
+    "y": 690,
+    "wires": [
+      [],
+      [],
+      []
+    ]
+  },
+  {
+    "id": "d300000000000001",
+    "type": "mtic-da-module-instanse",
+    "z": "tab_vav_slave",
+    "name": "温湿压-1",
+    "protocol": "modbus",
+    "clientType": "tcp",
+    "serialPort": "/dev/ttyUSB",
+    "unitId": 1,
+    "tcpHost": "127.0.0.1",
+    "tcpPort": 5020,
+    "tcpType": "DEFAULT",
+    "baseAddress": "0",
+    "props": [
+      {
+        "id": "7900000000000000017",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "wd",
+        "name": "房间温度",
+        "scale": "1",
+        "spanLow": -50,
+        "spanHigh": 100,
+        "change": 0,
+        "unit": "℃",
+        "address": 17,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522905595784347648",
+        "uniqueId": ".room.wd"
+      },
+      {
+        "id": "7900000000000000018",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "sd",
+        "name": "房间湿度",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 100,
+        "change": 0,
+        "unit": "%",
+        "address": 18,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522905597113942016",
+        "uniqueId": ".room.sd"
+      },
+      {
+        "id": "7900000000000000019",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "yc",
+        "name": "房间压差",
+        "scale": "1",
+        "spanLow": -500,
+        "spanHigh": 500,
+        "change": 0,
+        "unit": "Pa",
+        "address": 19,
+        "opType": "r",
+        "report": false,
+        "subProps": [],
+        "productPropId": "7522905599924125696",
+        "uniqueId": ".room.yc"
+      }
+    ],
+    "propsAlarm": [],
+    "propsArchive": [],
+    "product": "b0034596b311781e",
+    "x": 980,
+    "y": 780,
+    "wires": [
+      [],
+      [],
+      []
+    ]
+  },
+  {
+    "id": "816c878a8ce1d57a",
+    "type": "mtic-da-module-extend",
+    "name": "变静压排风机",
+    "baseAddress": "1",
+    "props": [
+      {
+        "id": "7522900859337195520",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "pfyl",
+        "name": "排风压力",
+        "scale": "1",
+        "spanLow": -500,
+        "spanHigh": 500,
+        "change": 0,
+        "unit": "Pa",
+        "address": 1,
+        "opType": "r",
+        "report": false,
+        "subProps": []
+      },
+      {
+        "id": "7522900859865677824",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "fjpl",
+        "name": "风机频率",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 50,
+        "change": 0,
+        "unit": "Hz",
+        "address": 2,
+        "opType": "r",
+        "report": false,
+        "subProps": []
+      }
+    ],
+    "propsAlarm": [],
+    "propsArchive": [],
+    "_version": 1
+  },
+  {
+    "id": "6e26b36725e00942",
+    "type": "mtic-da-module-extend",
+    "name": "变静压排风阀",
+    "baseAddress": "1",
+    "props": [
+      {
+        "id": "7522904192655441920",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "fl",
+        "name": "风量",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 5000,
+        "change": 0,
+        "unit": "m³/h",
+        "address": 1,
+        "opType": "r",
+        "report": false,
+        "subProps": []
+      },
+      {
+        "id": "7522904194320580608",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "kd",
+        "name": "开度",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 100,
+        "change": 0,
+        "unit": "%",
+        "address": 2,
+        "opType": "r",
+        "report": false,
+        "subProps": []
+      }
+    ],
+    "propsAlarm": [],
+    "propsArchive": [],
+    "_version": 1
+  },
+  {
+    "id": "b0034596b311781e",
+    "type": "mtic-da-module-extend",
+    "name": "变静压温湿压",
+    "baseAddress": "1",
+    "props": [
+      {
+        "id": "7522905595784347648",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "wd",
+        "name": "房间温度",
+        "scale": "1",
+        "spanLow": -50,
+        "spanHigh": 100,
+        "change": 0,
+        "unit": "℃",
+        "address": 1,
+        "opType": "r",
+        "report": false,
+        "subProps": []
+      },
+      {
+        "id": "7522905597113942016",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "sd",
+        "name": "房间湿度",
+        "scale": "1",
+        "spanLow": 0,
+        "spanHigh": 100,
+        "change": 0,
+        "unit": "%",
+        "address": 2,
+        "opType": "r",
+        "report": false,
+        "subProps": []
+      },
+      {
+        "id": "7522905599924125696",
+        "registerType": "AO",
+        "dataType": "int16",
+        "endian": "be",
+        "code": "yc",
+        "name": "房间压差",
+        "scale": "1",
+        "spanLow": -500,
+        "spanHigh": 500,
+        "change": 0,
+        "unit": "Pa",
+        "address": 3,
+        "opType": "r",
+        "report": false,
+        "subProps": []
+      }
+    ],
+    "propsAlarm": [],
+    "propsArchive": [],
+    "_version": 1
+  },
+  {
+    "id": "e600000000000001",
+    "type": "http in",
+    "z": "tab_vav_slave",
+    "name": "GET /vav",
+    "url": "/vav",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 420,
+    "wires": [
+      [
+        "e600000000000002"
+      ]
+    ]
+  },
+  {
+    "id": "e600000000000002",
+    "type": "template",
+    "z": "tab_vav_slave",
+    "name": "曲线页面 HTML",
+    "field": "payload",
+    "fieldType": "msg",
+    "format": "handlebars",
+    "syntax": "plain",
+    "template": "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n<meta charset=\"UTF-8\"/>\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\n<title>变静压历史曲线</title>\n<script src=\"https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js\"></script>\n<style>\n  body{font-family:system-ui,sans-serif;margin:0;background:#f5f7fa;color:#1f2937}\n  header{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:12px 16px;background:#fff;border-bottom:1px solid #e5e7eb}\n  h1{font-size:18px;margin:0}\n  .tag{padding:4px 10px;border-radius:999px;font-size:13px;font-weight:600}\n  .n{background:#dbeafe;color:#1d4ed8}.s{background:#ffedd5;color:#c2410c}\n  main{padding:12px;display:grid;gap:12px}\n  .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px}\n  .card h2{font-size:14px;margin:0 0 8px;color:#4b5563}\n  canvas{width:100%;max-height:260px}\n  .muted{font-size:12px;color:#9ca3af}\n</style>\n</head>\n<body>\n<header>\n  <h1>变静压 · 历史曲线</h1>\n  <span id=\"mode\" class=\"tag n\">—</span>\n  <span class=\"muted\" id=\"meta\">加载中…</span>\n</header>\n<main>\n  <div class=\"card\"><h2>静压 / 房间压差 (Pa)</h2><canvas id=\"c1\"></canvas></div>\n  <div class=\"card\"><h2>风机频率 (Hz)</h2><canvas id=\"c2\"></canvas></div>\n  <div class=\"card\"><h2>阀1 风量 / 开度 / 模式</h2><canvas id=\"c3\"></canvas></div>\n  <div class=\"card\"><h2>排风阀总风量 (m³/h)</h2><canvas id=\"c4\"></canvas></div>\n</main>\n<script>\nconst opt = (yTitle)=>({\n  responsive:true, animation:false,\n  scales:{ x:{ type:'time' in Chart.defaults.scales ? undefined : undefined, ticks:{ maxTicksLimit:8, callback:(v,i,ticks)=>{ const t=ticks[i].raw||ticks[i].value; const d=new Date(typeof t==='number'?t:v); return d.toLocaleTimeString(); } } }, y:{ title:{display:!!yTitle,text:yTitle} } },\n  plugins:{ legend:{ position:'bottom' } }\n});\nfunction mk(id, datasets){\n  return new Chart(document.getElementById(id), { type:'line', data:{ labels:[], datasets }, options: opt() });\n}\nconst c1 = mk('c1', [\n  { label:'排风机-1 静压', data:[], borderColor:'#2563eb', tension:.2, pointRadius:0 },\n  { label:'排风机-2 静压', data:[], borderColor:'#f59e0b', tension:.2, pointRadius:0 },\n  { label:'房间压差', data:[], borderColor:'#059669', tension:.2, pointRadius:0 },\n]);\nconst c2 = mk('c2', [\n  { label:'排风机-1 频率', data:[], borderColor:'#2563eb', tension:.2, pointRadius:0 },\n  { label:'排风机-2 频率', data:[], borderColor:'#f59e0b', tension:.2, pointRadius:0 },\n]);\nconst c3 = mk('c3', [\n  { label:'阀1 风量', data:[], borderColor:'#2563eb', tension:.2, pointRadius:0 },\n  { label:'阀1 开度', data:[], borderColor:'#f59e0b', tension:.2, pointRadius:0 },\n  { label:'模式', data:[], borderColor:'#dc2626', tension:.0, pointRadius:0, stepped:true },\n]);\nconst c4 = mk('c4', [\n  { label:'阀1+2+3 总风量', data:[], borderColor:'#7c3aed', tension:.2, pointRadius:0 },\n  { label:'阀4+5+6 总风量', data:[], borderColor:'#0891b2', tension:.2, pointRadius:0 },\n]);\nfunction apply(ch, labels, arrs){\n  ch.data.labels = labels;\n  arrs.forEach((a,i)=> ch.data.datasets[i].data = a);\n  ch.update('none');\n}\nasync function tick(){\n  try{\n    const res = await fetch('/vav/api', {cache:'no-store'});\n    const j = await res.json();\n    const pts = j.points || [];\n    const labels = pts.map(p=>p.t);\n    apply(c1, labels, [pts.map(p=>p.pfyl1), pts.map(p=>p.pfyl2), pts.map(p=>p.yc)]);\n    apply(c2, labels, [pts.map(p=>p.fjpl1), pts.map(p=>p.fjpl2)]);\n    apply(c3, labels, [pts.map(p=>p.fl1), pts.map(p=>p.kd1), pts.map(p=>p.modeStatus)]);\n    apply(c4, labels, [pts.map(p=>p.fl_sum_123), pts.map(p=>p.fl_sum_456)]);\n    const el = document.getElementById('mode');\n    const standby = j.mode === 'standby';\n    el.textContent = standby ? '值班模式' : '正常模式';\n    el.className = 'tag ' + (standby ? 's' : 'n');\n    document.getElementById('meta').textContent = '点数 ' + pts.length + ' · 约保留 20 分钟 · 每秒刷新';\n  }catch(e){\n    document.getElementById('meta').textContent = '拉取失败: ' + e.message;\n  }\n}\ntick();\nsetInterval(tick, 1000);\n</script>\n</body>\n</html>\n",
+    "output": "str",
+    "x": 380,
+    "y": 420,
+    "wires": [
+      [
+        "e600000000000003"
+      ]
+    ]
+  },
+  {
+    "id": "e600000000000003",
+    "type": "http response",
+    "z": "tab_vav_slave",
+    "name": "",
+    "statusCode": "200",
+    "headers": {
+      "Content-Type": "text/html; charset=utf-8"
+    },
+    "x": 590,
+    "y": 420,
+    "wires": []
+  },
+  {
+    "id": "e600000000000010",
+    "type": "http in",
+    "z": "tab_vav_slave",
+    "name": "GET /vav/api",
+    "url": "/vav/api",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 160,
+    "y": 480,
+    "wires": [
+      [
+        "e600000000000011"
+      ]
+    ]
+  },
+  {
+    "id": "e600000000000011",
+    "type": "function",
+    "z": "tab_vav_slave",
+    "name": "返回历史 JSON",
+    "func": "const hist = global.get('vavHistory') || [];\nconst mode = global.get('vavMode') || 'normal';\nmsg.headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };\nmsg.payload = { mode, count: hist.length, points: hist };\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 390,
+    "y": 480,
+    "wires": [
+      [
+        "e600000000000012"
+      ]
+    ]
+  },
+  {
+    "id": "e600000000000012",
+    "type": "http response",
+    "z": "tab_vav_slave",
+    "name": "",
+    "statusCode": "200",
+    "headers": {},
+    "x": 590,
+    "y": 480,
+    "wires": []
+  },
+  {
+    "id": "e600000000000000",
+    "type": "comment",
+    "z": "tab_vav_slave",
+    "name": "浏览器打开 http://<Node-RED>:1880/vav   （不依赖 dashboard）",
+    "info": "",
+    "x": 320,
+    "y": 380,
+    "wires": []
+  }
+]

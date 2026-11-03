@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>变静压历史曲线</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  body{font-family:system-ui,sans-serif;margin:0;background:#f5f7fa;color:#1f2937}
+  header{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:12px 16px;background:#fff;border-bottom:1px solid #e5e7eb}
+  h1{font-size:18px;margin:0}
+  .tag{padding:4px 10px;border-radius:999px;font-size:13px;font-weight:600}
+  .n{background:#dbeafe;color:#1d4ed8}.s{background:#ffedd5;color:#c2410c}
+  main{padding:12px;display:grid;gap:12px}
+  .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px}
+  .card h2{font-size:14px;margin:0 0 8px;color:#4b5563}
+  canvas{width:100%;max-height:260px}
+  .muted{font-size:12px;color:#9ca3af}
+</style>
+</head>
+<body>
+<header>
+  <h1>变静压 · 历史曲线</h1>
+  <span id="mode" class="tag n">—</span>
+  <span class="muted" id="meta">加载中…</span>
+</header>
+<main>
+  <div class="card"><h2>静压 / 房间压差 (Pa)</h2><canvas id="c1"></canvas></div>
+  <div class="card"><h2>风机频率 (Hz)</h2><canvas id="c2"></canvas></div>
+  <div class="card"><h2>阀1 风量 / 开度 / 模式</h2><canvas id="c3"></canvas></div>
+  <div class="card"><h2>排风阀总风量 (m³/h)</h2><canvas id="c4"></canvas></div>
+</main>
+<script>
+const opt = (yTitle)=>({
+  responsive:true, animation:false,
+  scales:{ x:{ type:'time' in Chart.defaults.scales ? undefined : undefined, ticks:{ maxTicksLimit:8, callback:(v,i,ticks)=>{ const t=ticks[i].raw||ticks[i].value; const d=new Date(typeof t==='number'?t:v); return d.toLocaleTimeString(); } } }, y:{ title:{display:!!yTitle,text:yTitle} } },
+  plugins:{ legend:{ position:'bottom' } }
+});
+function mk(id, datasets){
+  return new Chart(document.getElementById(id), { type:'line', data:{ labels:[], datasets }, options: opt() });
+}
+const c1 = mk('c1', [
+  { label:'排风机-1 静压', data:[], borderColor:'#2563eb', tension:.2, pointRadius:0 },
+  { label:'排风机-2 静压', data:[], borderColor:'#f59e0b', tension:.2, pointRadius:0 },
+  { label:'房间压差', data:[], borderColor:'#059669', tension:.2, pointRadius:0 },
+]);
+const c2 = mk('c2', [
+  { label:'排风机-1 频率', data:[], borderColor:'#2563eb', tension:.2, pointRadius:0 },
+  { label:'排风机-2 频率', data:[], borderColor:'#f59e0b', tension:.2, pointRadius:0 },
+]);
+const c3 = mk('c3', [
+  { label:'阀1 风量', data:[], borderColor:'#2563eb', tension:.2, pointRadius:0 },
+  { label:'阀1 开度', data:[], borderColor:'#f59e0b', tension:.2, pointRadius:0 },
+  { label:'模式', data:[], borderColor:'#dc2626', tension:.0, pointRadius:0, stepped:true },
+]);
+const c4 = mk('c4', [
+  { label:'阀1+2+3 总风量', data:[], borderColor:'#7c3aed', tension:.2, pointRadius:0 },
+  { label:'阀4+5+6 总风量', data:[], borderColor:'#0891b2', tension:.2, pointRadius:0 },
+]);
+function apply(ch, labels, arrs){
+  ch.data.labels = labels;
+  arrs.forEach((a,i)=> ch.data.datasets[i].data = a);
+  ch.update('none');
+}
+async function tick(){
+  try{
+    const res = await fetch('/vav/api', {cache:'no-store'});
+    const j = await res.json();
+    const pts = j.points || [];
+    const labels = pts.map(p=>p.t);
+    apply(c1, labels, [pts.map(p=>p.pfyl1), pts.map(p=>p.pfyl2), pts.map(p=>p.yc)]);
+    apply(c2, labels, [pts.map(p=>p.fjpl1), pts.map(p=>p.fjpl2)]);
+    apply(c3, labels, [pts.map(p=>p.fl1), pts.map(p=>p.kd1), pts.map(p=>p.modeStatus)]);
+    apply(c4, labels, [pts.map(p=>p.fl_sum_123), pts.map(p=>p.fl_sum_456)]);
+    const el = document.getElementById('mode');
+    const standby = j.mode === 'standby';
+    el.textContent = standby ? '值班模式' : '正常模式';
+    el.className = 'tag ' + (standby ? 's' : 'n');
+    document.getElementById('meta').textContent = '点数 ' + pts.length + ' · 约保留 20 分钟 · 每秒刷新';
+  }catch(e){
+    document.getElementById('meta').textContent = '拉取失败: ' + e.message;
+  }
+}
+tick();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
