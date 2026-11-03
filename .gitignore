@@ -1,0 +1,11 @@
+node_modules/
+.DS_Store
+*.bak
+*.bak-*
+flows_cred.json
+*credentials*
+.env
+.env.*
+*.pem
+id_rsa
+id_ed25519
