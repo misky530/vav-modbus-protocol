@@ -123,6 +123,10 @@ for (let i = 1; i <= 6; i++) {
 const wd = Math.round(clamp(24 + wave(1.2, 180, 0.3) + (rnd(30) - 0.5) * 0.2, -50, 100));
 const sd = Math.round(clamp(55 + wave(4, 240, 1.0) + (rnd(31) - 0.5) * 0.5, 0, 100));
 const yc = Math.round(clamp(5 + wave(2.5, 70, 0.8) + (rnd(32) - 0.5) * 0.4, -500, 500));
+// 温湿压-2：同量程轻度曲线，相位/周期略偏移，避免与房间1完全重合
+const wd2 = Math.round(clamp(23.5 + wave(1.1, 195, 1.4) + (rnd(40) - 0.5) * 0.2, -50, 100));
+const sd2 = Math.round(clamp(52 + wave(3.5, 255, 2.2) + (rnd(41) - 0.5) * 0.5, 0, 100));
+const yc2 = Math.round(clamp(4 + wave(2.2, 78, 2.5) + (rnd(42) - 0.5) * 0.4, -500, 500));
 
 const fl_sum_123 = valves['排风阀-1'].fl + valves['排风阀-2'].fl + valves['排风阀-3'].fl;
 const fl_sum_456 = valves['排风阀-4'].fl + valves['排风阀-5'].fl + valves['排风阀-6'].fl;
@@ -135,7 +139,7 @@ const sim = {
   },
   valves,
   sums: { fl_sum_123, fl_sum_456 },
-  room: { '温湿压-1': { wd, sd, yc } },
+  room: { '温湿压-1': { wd, sd, yc }, '温湿压-2': { wd: wd2, sd: sd2, yc: yc2 } },
   points: {},
   overrides: prev.overrides || {}
 };
@@ -174,6 +178,9 @@ put('系统命令','cmd_standby', 0, '-', 21);
 put('系统状态','mode_status', normal ? 0 : 1, '-', 22);
 put('排风汇总','fl_sum_123', sim.sums.fl_sum_123, 'm³/h', 23);
 put('排风汇总','fl_sum_456', sim.sums.fl_sum_456, 'm³/h', 24);
+put('温湿压-2','wd', sim.room['温湿压-2'].wd, '℃', 25);
+put('温湿压-2','sd', sim.room['温湿压-2'].sd, '%', 26);
+put('温湿压-2','yc', sim.room['温湿压-2'].yc, 'Pa', 27);
 
 function toReg(v) {
   let n = Math.round(Number(v));
@@ -192,7 +199,8 @@ const order = [
   ['排风阀-6','fl'], ['排风阀-6','kd'],
   ['温湿压-1','wd'], ['温湿压-1','sd'], ['温湿压-1','yc'],
   ['系统命令','cmd_normal'], ['系统命令','cmd_standby'], ['系统状态','mode_status'],
-  ['排风汇总','fl_sum_123'], ['排风汇总','fl_sum_456']
+  ['排风汇总','fl_sum_123'], ['排风汇总','fl_sum_456'],
+  ['温湿压-2','wd'], ['温湿压-2','sd'], ['温湿压-2','yc']
 ];
 const regs = [];
 const bytes = [];
@@ -223,6 +231,11 @@ hist.push({
   fl_sum_456: sim.sums.fl_sum_456,
   kd1: sim.valves['排风阀-1'].kd,
   yc: sim.room['温湿压-1'].yc,
+  wd: sim.room['温湿压-1'].wd,
+  sd: sim.room['温湿压-1'].sd,
+  wd2: sim.room['温湿压-2'].wd,
+  sd2: sim.room['温湿压-2'].sd,
+  yc2: sim.room['温湿压-2'].yc,
   modeStatus: normal ? 0 : 1,
   sp: Math.round(spCenter)
 });
