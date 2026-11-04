@@ -26,6 +26,7 @@
 </header>
 <main>
   <div class="card"><h2>静压 / 房间压差 (Pa)</h2><canvas id="c1"></canvas></div>
+  <div class="card"><h2>温湿压 房间温度/湿度</h2><canvas id="c5"></canvas></div>
   <div class="card"><h2>风机频率 (Hz)</h2><canvas id="c2"></canvas></div>
   <div class="card"><h2>阀1 风量 / 开度 / 模式</h2><canvas id="c3"></canvas></div>
   <div class="card"><h2>排风阀总风量 (m³/h)</h2><canvas id="c4"></canvas></div>
@@ -42,7 +43,14 @@ function mk(id, datasets){
 const c1 = mk('c1', [
   { label:'排风机-1 静压', data:[], borderColor:'#2563eb', tension:.2, pointRadius:0 },
   { label:'排风机-2 静压', data:[], borderColor:'#f59e0b', tension:.2, pointRadius:0 },
-  { label:'房间压差', data:[], borderColor:'#059669', tension:.2, pointRadius:0 },
+  { label:'温湿压-1 压差', data:[], borderColor:'#059669', tension:.2, pointRadius:0 },
+  { label:'温湿压-2 压差', data:[], borderColor:'#10b981', tension:.2, pointRadius:0, borderDash:[4,3] },
+]);
+const c5 = mk('c5', [
+  { label:'温湿压-1 温度', data:[], borderColor:'#dc2626', tension:.2, pointRadius:0 },
+  { label:'温湿压-2 温度', data:[], borderColor:'#f97316', tension:.2, pointRadius:0, borderDash:[4,3] },
+  { label:'温湿压-1 湿度', data:[], borderColor:'#2563eb', tension:.2, pointRadius:0 },
+  { label:'温湿压-2 湿度', data:[], borderColor:'#06b6d4', tension:.2, pointRadius:0, borderDash:[4,3] },
 ]);
 const c2 = mk('c2', [
   { label:'排风机-1 频率', data:[], borderColor:'#2563eb', tension:.2, pointRadius:0 },
@@ -68,7 +76,8 @@ async function tick(){
     const j = await res.json();
     const pts = j.points || [];
     const labels = pts.map(p=>p.t);
-    apply(c1, labels, [pts.map(p=>p.pfyl1), pts.map(p=>p.pfyl2), pts.map(p=>p.yc)]);
+    apply(c1, labels, [pts.map(p=>p.pfyl1), pts.map(p=>p.pfyl2), pts.map(p=>p.yc), pts.map(p=>p.yc2)]);
+    apply(c5, labels, [pts.map(p=>p.wd), pts.map(p=>p.wd2), pts.map(p=>p.sd), pts.map(p=>p.sd2)]);
     apply(c2, labels, [pts.map(p=>p.fjpl1), pts.map(p=>p.fjpl2)]);
     apply(c3, labels, [pts.map(p=>p.fl1), pts.map(p=>p.kd1), pts.map(p=>p.modeStatus)]);
     apply(c4, labels, [pts.map(p=>p.fl_sum_123), pts.map(p=>p.fl_sum_456)]);
